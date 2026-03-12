@@ -1,154 +1,122 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { SiteHeader } from "@/components/site-header"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Dialog } from "@/components/ui/dialog"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { formatDate } from "@/lib/utils"
-import { Trash2, ChevronLeft, ChevronRight } from "lucide-react"
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table"
+import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react"
 
 const PAGE_SIZE = 50
 
 interface Appointment {
   id: string; data_ora: string; confermato: boolean
-  contact_nome?: string; contact_cognome?: string
+  contact_nome?: string; call_id?: string
 }
 
 export default function AppointmentsPage() {
-  const [items, setItems]         = useState<Appointment[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [error, setError]         = useState("")
-  const [offset, setOffset]       = useState(0)
-  const [toDelete, setToDelete]   = useState<Appointment | null>(null)
-  const [deleting, setDeleting]   = useState(false)
+  const [list, setList]       = useState<Appointment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [offset, setOffset]   = useState(0)
+  const [error, setError]     = useState("")
+  const [toDelete, setToDelete] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
-  const load = (off = offset) => {
-    setLoading(true)
-    setError("")
-    fetch(`/api/appointments?limit=${PAGE_SIZE}&offset=${off}`)
+  const load = () => {
+    setLoading(true); setError("")
+    fetch(`/api/appointments?limit=${PAGE_SIZE}&offset=${offset}`)
       .then(r => r.json())
-      .then(d => {
-        if (d.error) { setError(d.error); setItems([]) }
-        else setItems(Array.isArray(d) ? d : d.appointments ?? d.data ?? [])
-      })
+      .then(d => { if (d.error) { setError(d.error); setList([]) } else setList(Array.isArray(d) ? d : d.appointments ?? d.data ?? []) })
       .catch(() => setError("Server non raggiungibile"))
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [offset]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [offset])
 
   const handleDelete = async () => {
     if (!toDelete) return
     setDeleting(true)
-    try {
-      const r = await fetch(`/api/appointments/${toDelete.id}`, { method: "DELETE" })
-      const d = await r.json()
-      if (d.error) { setError(d.error) }
-      else { setItems(prev => prev.filter(a => a.id !== toDelete.id)) }
-    } catch {
-      setError("Errore durante la cancellazione")
-    } finally {
-      setDeleting(false)
-      setToDelete(null)
-    }
+    await fetch(`/api/appointments/${toDelete}`, { method: "DELETE" })
+    setToDelete(null)
+    setDeleting(false)
+    load()
   }
 
   return (
-    <div className="p-8 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Appuntamenti</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Appuntamenti confermati</p>
-      </div>
+    <>
+      <SiteHeader />
+      <div className="flex flex-1 flex-col gap-4 px-4 py-6 lg:px-6">
+        <p className="text-sm text-muted-foreground">Appuntamenti confermati dal sistema</p>
 
-      <Card>
-        <CardHeader><CardTitle>Lista appuntamenti</CardTitle></CardHeader>
-        <CardContent className="p-0">
-          {error && <p className="text-center text-red-400 py-6 text-sm px-6">{error}</p>}
-          {loading ? (
-            <div className="space-y-3 p-6">
-              {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
-            </div>
-          ) : items.length === 0 && !error ? (
-            <p className="text-center text-slate-600 py-10 text-sm">Nessun appuntamento trovato</p>
+        <div className="overflow-hidden rounded-lg border">
+          {error ? (
+            <p className="py-10 text-center text-sm text-destructive">{error}</p>
+          ) : loading ? (
+            <div className="space-y-2 p-4">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+          ) : list.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Nessun appuntamento trovato</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Paziente</TableHead>
-                  <TableHead>Data e ora</TableHead>
-                  <TableHead>Confermato</TableHead>
-                  <TableHead />
+                  <TableHead>Paziente</TableHead><TableHead>Data / Ora</TableHead>
+                  <TableHead>Confermato</TableHead><TableHead className="w-12" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map(a => (
+                {list.map(a => (
                   <TableRow key={a.id}>
-                    <TableCell className="font-medium text-white">
-                      {a.contact_nome ?? "—"} {a.contact_cognome ?? ""}
-                    </TableCell>
-                    <TableCell className="text-slate-300">{formatDate(a.data_ora)}</TableCell>
+                    <TableCell className="font-medium">{a.contact_nome ?? "—"}</TableCell>
+                    <TableCell>{new Date(a.data_ora).toLocaleString("it-IT", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</TableCell>
                     <TableCell>
-                      <Badge variant={a.confermato ? "success" : "muted"}>
-                        {a.confermato ? "Confermato" : "In attesa"}
-                      </Badge>
+                      {a.confermato
+                        ? <Badge variant="default">Sì</Badge>
+                        : <Badge variant="secondary">In attesa</Badge>}
                     </TableCell>
                     <TableCell>
-                      <button
-                        onClick={() => setToDelete(a)}
-                        className="p-1.5 rounded-md text-slate-600 hover:text-red-400 hover:bg-red-900/20 transition-colors"
-                        title="Cancella appuntamento"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-destructive" onClick={() => setToDelete(a.id)}>
+                        <Trash2 className="size-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           )}
-
-          {!loading && !error && (
-            <div className="flex items-center justify-between px-6 py-4 border-t border-slate-800">
-              <p className="text-xs text-slate-500">Mostrando {offset + 1}–{offset + items.length}</p>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0}>
-                  <ChevronLeft size={14} /> Precedente
-                </Button>
-                <Button variant="outline" onClick={() => setOffset(offset + PAGE_SIZE)} disabled={items.length < PAGE_SIZE}>
-                  Successivo <ChevronRight size={14} />
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Modale conferma cancellazione */}
-      <Dialog
-        open={!!toDelete}
-        onClose={() => setToDelete(null)}
-        title="Cancella appuntamento"
-      >
-        <p className="text-sm text-slate-300 mb-6">
-          Vuoi cancellare l&apos;appuntamento di{" "}
-          <strong className="text-white">
-            {toDelete?.contact_nome} {toDelete?.contact_cognome}
-          </strong>{" "}
-          del{" "}
-          <strong className="text-white">{toDelete ? formatDate(toDelete.data_ora) : ""}</strong>?
-          <br />
-          <span className="text-slate-500 text-xs mt-1 block">Questa azione non può essere annullata.</span>
-        </p>
-        <div className="flex gap-3 justify-end">
-          <Button variant="outline" onClick={() => setToDelete(null)}>Annulla</Button>
-          <Button variant="danger" onClick={handleDelete} disabled={deleting}>
-            {deleting ? "Cancellazione…" : "Sì, cancella"}
-          </Button>
         </div>
-      </Dialog>
-    </div>
+
+        {!loading && !error && (
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">Mostrando {offset + 1}–{offset + list.length}</p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0}>
+                <ChevronLeft className="size-4" /> Precedente
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setOffset(offset + PAGE_SIZE)} disabled={list.length < PAGE_SIZE}>
+                Successivo <ChevronRight className="size-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {toDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="rounded-lg border bg-card p-6 shadow-lg w-80 space-y-4">
+            <h2 className="font-semibold">Conferma cancellazione</h2>
+            <p className="text-sm text-muted-foreground">Sei sicuro di voler cancellare questo appuntamento? L&apos;azione è irreversibile.</p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setToDelete(null)} disabled={deleting}>Annulla</Button>
+              <Button variant="destructive" size="sm" onClick={handleDelete} disabled={deleting}>
+                {deleting ? "Cancellando…" : "Cancella"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }

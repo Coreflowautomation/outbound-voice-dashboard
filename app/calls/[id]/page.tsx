@@ -2,79 +2,53 @@
 
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge, esitoBadge } from "@/components/ui/badge"
+import { SiteHeader } from "@/components/site-header"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatDate, formatDuration } from "@/lib/utils"
 import { ArrowLeft, AlertTriangle } from "lucide-react"
 
-const TAG_LABELS: Record<string, string> = {
-  prezzo_menzionato:         "Ha menzionato prezzi",
-  slot_non_proposto:         "Slot non proposto",
-  obiezione_non_gestita:     "Obiezione non gestita",
-  conversazione_artificiosa: "Tono artificioso",
-  conferma_mancata:          "Conferma mancata",
-  fine_prematura:            "Fine prematura",
-  risposta_troppo_lunga:     "Risposta troppo lunga",
-  risposta_troppo_corta:     "Risposta troppo corta",
-  tono_non_empatico:         "Tono non empatico",
-  interruzione_prematura:    "Interruzione prematura",
-  mancata_qualificazione:    "Mancata qualificazione",
-  saluto_inadeguato:         "Saluto inadeguato",
-}
+const SCORE_COLOR = (n: number) =>
+  n >= 7 ? "bg-green-500" : n >= 4 ? "bg-yellow-500" : "bg-destructive"
 
-interface Analisi {
-  punteggio_totale: number; proposta_timing: number
-  gestione_obiezioni: number; naturalezza: number
-  conferma_appuntamento: number; parole_vietate: boolean
-  errori_tags: string[]; note: string
+const esitoBadge = (esito: string) => {
+  const map: Record<string, "default" | "destructive" | "secondary" | "outline"> = {
+    appuntamento_fissato: "default", rifiuto: "destructive", no_answer: "secondary", script: "outline",
+  }
+  const labels: Record<string, string> = {
+    appuntamento_fissato: "Appuntamento", rifiuto: "Rifiuto", no_answer: "No answer", script: "In corso",
+  }
+  return <Badge variant={map[esito] ?? "outline"}>{labels[esito] ?? esito}</Badge>
 }
 
 interface CallDetail {
-  id: string; esito: string; durata_secondi: number
-  created_at: string; trascrizione: string
-  contact: { nome: string; cognome: string; telefono: string }
-  analisi?: Analisi
+  id: string; esito: string; durata_secondi: number; created_at: string
+  trascrizione?: string
+  contact?: { nome: string; cognome: string; telefono: string }
+  analisi?: {
+    punteggio_totale?: number; proposta_timing?: number; gestione_obiezioni?: number
+    naturalezza?: number; conferma_appuntamento?: number; parole_vietate?: boolean
+    errori_tags?: string[]; note?: string
+  }
 }
 
-function ScoreRow({ label, score }: { label: string; score: number }) {
-  const color = score >= 7 ? "bg-green-500" : score >= 4 ? "bg-yellow-500" : "bg-red-500"
-  const textColor = score >= 7 ? "text-green-400" : score >= 4 ? "text-yellow-400" : "text-red-400"
-  return (
-    <div className="flex items-center gap-3">
-      <span className="text-sm text-slate-400 w-48 shrink-0">{label}</span>
-      <div className="flex-1 h-1.5 rounded-full bg-slate-700">
-        <div className={`h-1.5 rounded-full transition-all ${color}`} style={{ width: `${score * 10}%` }} />
-      </div>
-      <span className={`text-sm font-semibold w-10 text-right ${textColor}`}>{score}/10</span>
-    </div>
-  )
-}
-
-function TranscriptLine({ line }: { line: string }) {
-  const isSofia = line.startsWith("Sofia:")
-  return (
-    <div className={`flex gap-3 ${isSofia ? "" : "flex-row-reverse"}`}>
-      <div className={`flex-1 rounded-xl px-4 py-2.5 text-sm max-w-[80%] ${
-        isSofia
-          ? "bg-slate-800 text-slate-200 rounded-tl-none"
-          : "bg-blue-900/40 text-blue-100 rounded-tr-none text-right"
-      }`}>
-        {isSofia ? line.replace("Sofia: ", "") : line.replace(/^Paziente:\s?/, "")}
-      </div>
-    </div>
-  )
-}
+const METRICHE: [keyof NonNullable<CallDetail["analisi"]>, string][] = [
+  ["proposta_timing", "Proposta timing"],
+  ["gestione_obiezioni", "Gestione obiezioni"],
+  ["naturalezza", "Naturalezza"],
+  ["conferma_appuntamento", "Conferma appuntamento"],
+]
 
 export default function CallDetailPage() {
-  const { id } = useParams<{ id: string }>()
+  const { id } = useParams()
   const router  = useRouter()
   const [call, setCall]     = useState<CallDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]   = useState("")
 
   useEffect(() => {
+    if (!id) return
     fetch(`/api/calls/${id}`)
       .then(r => r.json())
       .then(d => { if (d.error) setError(d.error); else setCall(d) })
@@ -82,107 +56,134 @@ export default function CallDetailPage() {
       .finally(() => setLoading(false))
   }, [id])
 
-  if (loading) return (
-    <div className="p-8 space-y-4">
-      <Skeleton className="h-8 w-64" />
-      <Skeleton className="h-48 w-full" />
-      <Skeleton className="h-48 w-full" />
-    </div>
-  )
-
-  if (error) return (
-    <div className="p-8">
-      <p className="text-red-400">{error}</p>
-      <Button variant="ghost" onClick={() => router.back()} className="mt-4">
-        <ArrowLeft size={14} /> Torna indietro
-      </Button>
-    </div>
-  )
-
-  if (!call) return null
-
-  const lines = (call.trascrizione ?? "").split("\n").filter(Boolean)
+  const formatLine = (line: string) => {
+    if (line.startsWith("Sofia:") || line.startsWith("AI:"))
+      return <p key={line} className="text-primary font-medium">{line}</p>
+    if (line.startsWith("Paziente:") || line.startsWith("User:"))
+      return <p key={line} className="text-foreground">{line}</p>
+    return <p key={line} className="text-muted-foreground text-sm">{line}</p>
+  }
 
   return (
-    <div className="p-8 space-y-6 max-w-4xl">
-      {/* Back */}
-      <Button variant="ghost" onClick={() => router.back()}>
-        <ArrowLeft size={14} /> Chiamate
-      </Button>
+    <>
+      <SiteHeader />
+      <div className="flex flex-1 flex-col gap-4 px-4 py-6 lg:px-6">
+        <Button variant="ghost" size="sm" className="w-fit" onClick={() => router.push("/calls")}>
+          <ArrowLeft className="size-4" /> Torna alle chiamate
+        </Button>
 
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">
-            {call.contact.nome} {call.contact.cognome}
-          </h1>
-          <p className="text-sm text-slate-500 font-mono mt-0.5">{call.contact.telefono}</p>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap justify-end">
-          {esitoBadge(call.esito)}
-          <span className="text-sm text-slate-400">{formatDuration(call.durata_secondi ?? 0)}</span>
-          <span className="text-sm text-slate-500">{formatDate(call.created_at)}</span>
-        </div>
+        {loading ? (
+          <div className="space-y-4">
+            <Skeleton className="h-12 w-64" />
+            <Skeleton className="h-40 w-full" />
+            <Skeleton className="h-60 w-full" />
+          </div>
+        ) : error ? (
+          <p className="text-center text-sm text-destructive py-10">{error}</p>
+        ) : !call ? null : (
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="lg:col-span-2 flex flex-col gap-4">
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-xl">
+                        {call.contact?.nome} {call.contact?.cognome}
+                      </CardTitle>
+                      <p className="text-sm text-muted-foreground font-mono">{call.contact?.telefono}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      {esitoBadge(call.esito)}
+                      <span className="text-xs text-muted-foreground">
+                        {Math.floor((call.durata_secondi ?? 0) / 60)}:{((call.durata_secondi ?? 0) % 60).toString().padStart(2, "0")} min
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(call.created_at).toLocaleString("it-IT")}
+                      </span>
+                    </div>
+                  </div>
+                </CardHeader>
+              </Card>
+
+              {call.trascrizione && (
+                <Card>
+                  <CardHeader><CardTitle className="text-sm">Trascrizione</CardTitle></CardHeader>
+                  <CardContent>
+                    <div className="space-y-2 text-sm font-mono leading-relaxed max-h-96 overflow-y-auto">
+                      {call.trascrizione.split("\n").filter(Boolean).map(formatLine)}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-4">
+              {call.analisi ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      Analisi AI
+                      {call.analisi.punteggio_totale != null && (
+                        <span className={`text-lg font-bold ${call.analisi.punteggio_totale >= 7 ? "text-green-500" : call.analisi.punteggio_totale >= 4 ? "text-yellow-500" : "text-destructive"}`}>
+                          {call.analisi.punteggio_totale}/10
+                        </span>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {call.analisi.parole_vietate && (
+                      <div className="flex items-center gap-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 p-2 text-xs text-yellow-600 dark:text-yellow-400">
+                        <AlertTriangle className="size-3 shrink-0" />
+                        Rilevate parole vietate in questa chiamata
+                      </div>
+                    )}
+
+                    {METRICHE.map(([k, label]) => {
+                      const v = call.analisi?.[k] as number | undefined
+                      if (v == null) return null
+                      return (
+                        <div key={k} className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">{label}</span>
+                            <span className="font-medium">{v}/10</span>
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                            <div className={`h-full rounded-full ${SCORE_COLOR(v)}`} style={{ width: `${v * 10}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })}
+
+                    {(call.analisi.errori_tags?.length ?? 0) > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Errori rilevati</p>
+                        <div className="flex flex-wrap gap-1">
+                          {call.analisi.errori_tags?.map(tag => (
+                            <Badge key={tag} variant="destructive" className="text-xs">{tag.replaceAll("_", " ")}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {call.analisi.note && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Note</p>
+                        <p className="text-xs leading-relaxed">{call.analisi.note}</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardContent className="py-6">
+                    <p className="text-center text-sm text-muted-foreground">Analisi AI non ancora disponibile</p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
+        )}
       </div>
-
-      {/* Analisi AI */}
-      {call.analisi && (
-        <Card>
-          <CardHeader><CardTitle>Analisi AI</CardTitle></CardHeader>
-          <CardContent className="space-y-5">
-            {call.analisi.parole_vietate && (
-              <div className="flex items-center gap-2 rounded-lg bg-yellow-900/30 border border-yellow-800 px-4 py-3">
-                <AlertTriangle size={16} className="text-yellow-400" />
-                <span className="text-sm text-yellow-300">Rilevate parole vietate in questa chiamata</span>
-              </div>
-            )}
-
-            <div className="space-y-3">
-              <ScoreRow label="Punteggio totale"       score={call.analisi.punteggio_totale} />
-              <ScoreRow label="Timing proposta"        score={call.analisi.proposta_timing} />
-              <ScoreRow label="Gestione obiezioni"     score={call.analisi.gestione_obiezioni} />
-              <ScoreRow label="Naturalezza"            score={call.analisi.naturalezza} />
-              <ScoreRow label="Conferma appuntamento"  score={call.analisi.conferma_appuntamento} />
-            </div>
-
-            {call.analisi.errori_tags?.length > 0 && (
-              <div>
-                <p className="text-xs text-slate-500 mb-2 uppercase tracking-wide">Errori rilevati</p>
-                <div className="flex flex-wrap gap-2">
-                  {call.analisi.errori_tags.map(tag => (
-                    <Badge key={tag} variant="danger">
-                      {TAG_LABELS[tag] ?? tag}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {call.analisi.note && (
-              <div>
-                <p className="text-xs text-slate-500 mb-2 uppercase tracking-wide">Note analista AI</p>
-                <p className="text-sm text-slate-300 bg-slate-800 rounded-lg px-4 py-3 leading-relaxed">
-                  {call.analisi.note}
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Trascrizione */}
-      <Card>
-        <CardHeader><CardTitle>Trascrizione</CardTitle></CardHeader>
-        <CardContent>
-          {lines.length === 0 ? (
-            <p className="text-slate-600 text-sm">Trascrizione non disponibile</p>
-          ) : (
-            <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-              {lines.map((line, i) => <TranscriptLine key={i} line={line} />)}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+    </>
   )
 }
